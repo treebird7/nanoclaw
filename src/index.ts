@@ -215,6 +215,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // Store the cursor we'll advance to AFTER successful completion
   // Do NOT advance cursor yet — wait until agent succeeds
+  const previousCursor = lastAgentTimestamp[chatJid];
   const targetCursor = missedMessages[missedMessages.length - 1].timestamp;
 
   logger.info(
@@ -235,6 +236,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   await setTyping(chatJid, true);
   let hadError = false;
+  let outputSentToUser = false;
 
   const output = await runAgent(group, prompt, chatJid, messageId, async (result) => {
     // Streaming output callback — called for each agent result
@@ -245,6 +247,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
         await sendMessage(chatJid, `${ASSISTANT_NAME}: ${text}`);
+        outputSentToUser = true;
       }
       // Only reset idle timer on actual results, not session-update markers (result: null)
       resetIdleTimer();
@@ -259,8 +262,16 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // Agent failed — do NOT advance cursor, messages will be retried
-    logger.warn({ group: group.name }, 'Agent error, messages will be retried on next poll');
+    // If we already sent output to the user, don't roll back the cursor —
+    // the user got their response and re-processing would send duplicates.
+    if (outputSentToUser) {
+      logger.warn({ group: group.name }, 'Agent error after output was sent, skipping cursor rollback to prevent duplicates');
+      return true;
+    }
+    // Roll back cursor so retries can re-process these messages
+    lastAgentTimestamp[chatJid] = previousCursor;
+    saveState();
+    logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
     return false;
   }
 
