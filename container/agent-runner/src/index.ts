@@ -371,6 +371,21 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Load MCP servers from .mcp.json if it exists
+  const mcpConfigPath = '/home/node/.claude/.mcp.json';
+  let additionalMcpServers: Record<string, unknown> = {};
+  if (fs.existsSync(mcpConfigPath)) {
+    try {
+      const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+      if (mcpConfig.mcpServers && typeof mcpConfig.mcpServers === 'object') {
+        additionalMcpServers = mcpConfig.mcpServers;
+        log(`Loaded ${Object.keys(additionalMcpServers).length} MCP server(s) from .mcp.json`);
+      }
+    } catch (err) {
+      log(`Failed to load .mcp.json: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -388,7 +403,7 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*'
+        'mcp__*'
       ],
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -403,6 +418,7 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        ...additionalMcpServers,
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook()] }]

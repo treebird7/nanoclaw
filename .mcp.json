@@ -1,3 +1,27 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "toak": {
+      "command": "node",
+      "args": ["/workspace/extra/toak/dist/bin/toak.js", "serve"],
+      "cwd": "/workspace/extra/toak",
+      "env": {
+        "TOAK_API_KEY": "DRfvRynfBo01HQjTjNq7DkNX+wIJPZhAvuUqNT7JdxQ=",
+        "TOAK_AGENT_ID": "sansan",
+        "TOAK_DISABLE_SIGNATURES": "1",
+        "HUB_URL": "https://hub.treebird.uk",
+        "INVOAK_DIR": "/workspace/extra/toak/invoak",
+        "GITHUB_TOKEN": ""
+      }
+    },
+    "envoak": {
+      "command": "node",
+      "args": ["/workspace/extra/envoak/dist/bin/envoak.js", "mcp"],
+      "cwd": "/workspace/extra/envoak"
+    },
+    "watsan": {
+      "command": "node",
+      "args": ["/workspace/extra/watsan/dist/bin/watsan-mcp.js"],
+      "cwd": "/workspace/extra/watsan"
+    }
+  }
 }
