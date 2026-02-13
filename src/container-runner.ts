@@ -41,6 +41,7 @@ export interface ContainerInput {
   messageId?: string;
   isMain: boolean;
   isScheduledTask?: boolean;
+  secrets?: Record<string, string>;
 }
 
 export interface ContainerOutput {
@@ -230,6 +231,38 @@ function buildVolumeMounts(
   return mounts;
 }
 
+/**
+ * Read allowed secrets from .env for passing to the container via stdin.
+ * Secrets are never written to disk or mounted as files.
+ */
+function readSecrets(): Record<string, string> {
+  const envFile = path.join(process.cwd(), '.env');
+  if (!fs.existsSync(envFile)) return {};
+
+  const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+  const secrets: Record<string, string> = {};
+  const content = fs.readFileSync(envFile, 'utf-8');
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    if (!allowedVars.includes(key)) continue;
+    let value = trimmed.slice(eqIdx + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (value) secrets[key] = value;
+  }
+
+  return secrets;
+}
+
 function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName, '--network', 'host'];
 
@@ -301,9 +334,12 @@ export async function runContainerAgent(
     let stdoutTruncated = false;
     let stderrTruncated = false;
 
-    // Write input and close stdin (container needs EOF to process piped input)
+    // Pass secrets via stdin (never written to disk or mounted as files)
+    input.secrets = readSecrets();
     container.stdin.write(JSON.stringify(input));
     container.stdin.end();
+    // Remove secrets from input so they don't appear in logs
+    delete input.secrets;
 
     // Streaming output: parse OUTPUT_START/END marker pairs as they arrive
     let parseBuffer = '';
