@@ -35,8 +35,10 @@ function getHomeDir(): string {
 export interface ContainerInput {
   prompt: string;
   sessionId?: string;
+  resumeSessionAt?: string; // UUID of last assistant message (prevents branching)
   groupFolder: string;
   chatJid: string;
+  messageId?: string;
   isMain: boolean;
   isScheduledTask?: boolean;
 }

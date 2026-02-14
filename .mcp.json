@@ -16,7 +16,10 @@
     "envoak": {
       "command": "node",
       "args": ["/workspace/extra/envoak/dist/bin/envoak.js", "mcp"],
-      "cwd": "/workspace/extra/envoak"
+      "cwd": "/workspace/extra/envoak",
+      "env": {
+        "ENVOAK_KEY": "e7542358d8390934a9624cb424e06c552d705f0ee504b232d2e15ead227e72ec"
+      }
     },
     "watsan": {
       "command": "node",

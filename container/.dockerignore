@@ -1,0 +1,40 @@
+# Prevent unnecessary files from being copied into the container
+
+# Node modules (will be installed fresh)
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs
+*.md
+!README.md
+
+# Tests
+*.test.ts
+*.spec.ts
+__tests__/
+coverage/

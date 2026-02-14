@@ -79,6 +79,12 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
+**Sancast Directory:** `/workspace/extra/sancast/` — Your personal drive-synced folder for generated content. Use this for:
+- Audio files (podcasts, summaries, briefings)
+- Generated reports, digests
+- Any content that should sync to Treebird's cloud storage
+- Read-write access
+
 ## Memory
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.

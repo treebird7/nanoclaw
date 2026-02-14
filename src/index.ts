@@ -46,6 +46,7 @@ import {
   connectDiscord,
   sendDiscordMessage,
   setDiscordTyping,
+  addDiscordReaction,
   getDiscordGuilds,
   stopDiscord,
   DiscordMessage,
@@ -197,20 +198,23 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
+    // Use per-group trigger pattern for multi-agent channels
+    const triggerPattern = new RegExp(`^${group.trigger}\\b`, 'i');
     const hasTrigger = missedMessages.some((m) =>
-      TRIGGER_PATTERN.test(m.content.trim()),
+      triggerPattern.test(m.content.trim()),
     );
     if (!hasTrigger) return true;
   }
 
   const prompt = formatMessages(missedMessages);
 
-  // Advance cursor so the piping path in startMessageLoop won't re-fetch
-  // these messages. Save the old cursor so we can roll back on error.
-  const previousCursor = lastAgentTimestamp[chatJid] || '';
-  lastAgentTimestamp[chatJid] =
-    missedMessages[missedMessages.length - 1].timestamp;
-  saveState();
+  // Get the most recent message ID (from user, not bot)
+  const lastUserMessage = missedMessages[missedMessages.length - 1];
+  const messageId = lastUserMessage?.id;
+
+  // Store the cursor we'll advance to AFTER successful completion
+  // Do NOT advance cursor yet — wait until agent succeeds
+  const targetCursor = missedMessages[missedMessages.length - 1].timestamp;
 
   logger.info(
     { group: group.name, messageCount: missedMessages.length },
@@ -231,7 +235,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   await setTyping(chatJid, true);
   let hadError = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
+  const output = await runAgent(group, prompt, chatJid, messageId, async (result) => {
     // Streaming output callback — called for each agent result
     if (result.result) {
       const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
@@ -254,24 +258,68 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   if (idleTimer) clearTimeout(idleTimer);
 
   if (output === 'error' || hadError) {
-    // Roll back cursor so retries can re-process these messages
-    lastAgentTimestamp[chatJid] = previousCursor;
-    saveState();
-    logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
+    // Agent failed — do NOT advance cursor, messages will be retried
+    logger.warn({ group: group.name }, 'Agent error, messages will be retried on next poll');
     return false;
   }
 
+  // Success! Now we can safely advance the cursor
+  lastAgentTimestamp[chatJid] = targetCursor;
+  saveState();
+  logger.debug({ group: group.name }, 'Agent succeeded, cursor advanced');
+
   return true;
+}
+
+/**
+ * Extract the last assistant message UUID from a session file.
+ * This prevents subagent branching issues by explicitly anchoring resume points.
+ */
+function getLastAssistantUuid(groupFolder: string, sessionId?: string): string | undefined {
+  if (!sessionId) return undefined;
+
+  const sessionPath = path.join(
+    DATA_DIR,
+    'sessions',
+    groupFolder,
+    '.claude',
+    'projects',
+    '-workspace-group',
+    `${sessionId}.jsonl`,
+  );
+
+  if (!fs.existsSync(sessionPath)) return undefined;
+
+  try {
+    const lines = fs.readFileSync(sessionPath, 'utf-8').trim().split('\n');
+    // Search backwards for the last assistant message
+    for (let i = lines.length - 1; i >= 0; i--) {
+      try {
+        const entry = JSON.parse(lines[i]);
+        if (entry.type === 'assistant' && entry.uuid) {
+          return entry.uuid;
+        }
+      } catch {
+        // Skip malformed lines
+      }
+    }
+  } catch (err) {
+    logger.debug({ groupFolder, sessionId, err }, 'Failed to parse session file for last assistant UUID');
+  }
+
+  return undefined;
 }
 
 async function runAgent(
   group: RegisteredGroup,
   prompt: string,
   chatJid: string,
+  messageId?: string,
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.folder === MAIN_GROUP_FOLDER;
   const sessionId = sessions[group.folder];
+  const resumeSessionAt = getLastAssistantUuid(group.folder, sessionId);
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
@@ -315,8 +363,10 @@ async function runAgent(
       {
         prompt,
         sessionId,
+        resumeSessionAt,
         groupFolder: group.folder,
         chatJid,
+        messageId,
         isMain,
       },
       (proc, containerName) => queue.registerProcess(chatJid, proc, containerName, group.folder),
@@ -409,6 +459,24 @@ function startIpcWatcher(): void {
                   logger.warn(
                     { chatJid: data.chatJid, sourceGroup },
                     'Unauthorized IPC message attempt blocked',
+                  );
+                }
+              } else if (data.type === 'reaction' && data.chatJid && data.messageId && data.emoji) {
+                // Add reaction to a message
+                const targetGroup = registeredGroups[data.chatJid];
+                if (
+                  isMain ||
+                  (targetGroup && targetGroup.folder === sourceGroup)
+                ) {
+                  await addDiscordReaction(data.chatJid, data.messageId, data.emoji);
+                  logger.info(
+                    { chatJid: data.chatJid, messageId: data.messageId, emoji: data.emoji, sourceGroup },
+                    'IPC reaction added',
+                  );
+                } else {
+                  logger.warn(
+                    { chatJid: data.chatJid, sourceGroup },
+                    'Unauthorized IPC reaction attempt blocked',
                   );
                 }
               }
@@ -766,8 +834,10 @@ async function startMessageLoop(): Promise<void> {
           // Non-trigger messages accumulate in DB and get pulled as
           // context when a trigger eventually arrives.
           if (needsTrigger) {
+            // Use per-group trigger pattern for multi-agent channels
+            const triggerPattern = new RegExp(`^${group.trigger}\\b`, 'i');
             const hasTrigger = groupMessages.some((m) =>
-              TRIGGER_PATTERN.test(m.content.trim()),
+              triggerPattern.test(m.content.trim()),
             );
             if (!hasTrigger) continue;
           }

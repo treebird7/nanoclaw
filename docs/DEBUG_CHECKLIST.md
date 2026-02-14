@@ -1,15 +1,21 @@
 # NanoClaw Debug Checklist
 
-## Known Issues (2026-02-08)
+## Known Issues (Updated 2026-02-13)
 
-### 1. [FIXED] Resume branches from stale tree position
-When agent teams spawns subagent CLI processes, they write to the same session JSONL. On subsequent `query()` resumes, the CLI reads the JSONL but may pick a stale branch tip (from before the subagent activity), causing the agent's response to land on a branch the host never receives a `result` for. **Fix**: pass `resumeSessionAt` with the last assistant message UUID to explicitly anchor each resume.
+### 1. [FIXED 2026-02-13] Resume branches from stale tree position
+When agent teams spawns subagent CLI processes, they write to the same session JSONL. On subsequent `query()` resumes, the CLI reads the JSONL but may pick a stale branch tip (from before the subagent activity), causing the agent's response to land on a branch the host never receives a `result` for.
 
-### 2. IDLE_TIMEOUT == CONTAINER_TIMEOUT (both 30 min)
+**Fix Applied**: Now passes `resumeSessionAt` with the last assistant message UUID to explicitly anchor each resume. Added `getLastAssistantUuid()` helper that extracts the UUID from session JSONL files.
+
+### 2. [DEFERRED] IDLE_TIMEOUT == CONTAINER_TIMEOUT (both 30 min)
 Both timers fire at the same time, so containers always exit via hard SIGKILL (code 137) instead of graceful `_close` sentinel shutdown. The idle timeout should be shorter (e.g., 5 min) so containers wind down between messages, while container timeout stays at 30 min as a safety net for stuck agents.
 
-### 3. Cursor advanced before agent succeeds
+**Status**: User reports this was caused by MacBook sleep settings, not code. Blackouts are acceptable. Issue deferred.
+
+### 3. [FIXED 2026-02-13] Cursor advanced before agent succeeds
 `processGroupMessages` advances `lastAgentTimestamp` before the agent runs. If the container times out, retries find no messages (cursor already past them). Messages are permanently lost on timeout.
+
+**Fix Applied**: Cursor now advances ONLY after successful agent completion. Store target cursor as `targetCursor`, run agent, then advance on success. On error, cursor stays at previous position so messages are automatically retried on next poll.
 
 ## Quick Status Check
 

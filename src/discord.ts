@@ -102,6 +102,26 @@ export async function setDiscordTyping(channelId: string): Promise<void> {
   }
 }
 
+export async function addDiscordReaction(
+  channelId: string,
+  messageId: string,
+  emoji: string
+): Promise<void> {
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !(channel instanceof TextChannel || channel instanceof DMChannel)) {
+      logger.warn({ channelId }, 'Cannot add reaction — not a text channel');
+      return;
+    }
+
+    const message = await channel.messages.fetch(messageId);
+    await message.react(emoji);
+    logger.debug({ channelId, messageId, emoji }, 'Reaction added');
+  } catch (err) {
+    logger.debug({ channelId, messageId, emoji, err }, 'Failed to add reaction');
+  }
+}
+
 export function getDiscordGuilds(): DiscordGuildInfo[] {
   if (!client) return [];
   return Array.from(client.guilds.cache.values()).map((guild) => ({
