@@ -22,7 +22,7 @@ This skill adds automatic voice message transcription using OpenAI's Whisper API
 >
 > Cost: ~$0.006 per minute of audio (~$0.003 per typical 30-second voice note)
 >
-> Once you have your API key, we'll configure it securely via Envoak or environment variable.
+> Once you have your API key, we'll configure it as an environment variable.
 
 Wait for user to confirm they have an API key before continuing.
 
@@ -203,31 +203,21 @@ const content = transcribedContent || msg.content || '';
 
 ### Step 5: Set Up API Key
 
-The `OPENAI_API_KEY` should be available as an environment variable. Two approaches:
+The `OPENAI_API_KEY` must be available as an environment variable.
 
-**Option A: Envoak (Recommended)**
-
-If Envoak is set up at `/workspace/group/config.enc`, the key is already stored there. Ensure it's injected via the launch script:
-
-```bash
-# In the nanoclaw launch script or service definition
-export OPENAI_API_KEY=$(envoak get OPENAI_API_KEY)
-```
-
-**Option B: Environment Variable**
-
-Add to the service's environment (e.g., LaunchAgent plist or `.env`):
+Add it to the service's environment (e.g., LaunchAgent plist, `.env`, or shell profile):
 
 ```bash
 export OPENAI_API_KEY="sk-proj-..."
 ```
 
-**Use the AskUserQuestion tool** to ask:
+**Use the AskUserQuestion tool** to confirm:
 
-> How would you like to configure the OpenAI API key?
+> Please set the `OPENAI_API_KEY` environment variable in your service configuration.
 >
-> A) Via Envoak (already stored in config.enc) - Recommended
-> B) Via environment variable (I'll set it manually)
+> This can be in your LaunchAgent plist, `.env` file, or shell profile.
+>
+> Let me know when it's set.
 
 ### Step 6: Fix Orphan Container Cleanup (CRITICAL)
 
@@ -393,7 +383,7 @@ launchctl kickstart -k gui/$(id -u)/com.nanoclaw
 ### "Transcription unavailable"
 
 - `OPENAI_API_KEY` not set in environment
-- Envoak not injecting the key properly
+- Environment variable not reaching the process (check LaunchAgent plist or `.env`)
 
 ### "Transcription failed"
 
@@ -424,7 +414,7 @@ npm install --legacy-peer-deps
 
 ## Security Notes
 
-- The `OPENAI_API_KEY` should be stored in Envoak (`config.enc`) or as an environment variable -- never committed to git
+- The `OPENAI_API_KEY` should be set as an environment variable -- never committed to git
 - Audio files are sent to OpenAI for transcription -- review their data usage policy
 - Temp files in `/tmp/` are deleted immediately after transcription
 - Transcripts are stored in the SQLite database like regular text messages
@@ -475,7 +465,7 @@ To remove the feature:
 |--------|-------------------|---------------------|
 | Voice detection | `audioMessage.ptt === true` | `contentType.startsWith('audio/')` or file extension |
 | Download method | `downloadMediaMessage(msg, 'buffer')` | `fetch(attachment.url)` |
-| API key storage | `.transcription.config.json` (gitignored) | Environment variable via Envoak |
+| API key storage | `.transcription.config.json` (gitignored) | `OPENAI_API_KEY` environment variable |
 | Message handler | `src/index.ts` sock.ev messages.upsert | `src/discord.ts` client.on messageCreate |
 | Stored format | `[Voice: <transcript>]` | `[Voice: <transcript>]` |
 
