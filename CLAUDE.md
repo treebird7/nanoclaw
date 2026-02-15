@@ -6,6 +6,10 @@ Personal Claude assistant. See [README.md](README.md) for philosophy and setup. 
 
 Single Node.js process that connects to Discord, routes messages to Claude Agent SDK running in Docker containers. Each channel has isolated filesystem and memory.
 
+**Multi-Agent Support:** Single codebase can run multiple agents (sansan, sasusan, etc.) with per-group trigger patterns (`@sansan`, `@sasusan`) in the same Discord channel. Each agent has isolated state via `groups/{name}/` directories.
+
+**Secret Management:** Uses envoak encryption (config.enc + .envoak_key) for all secrets. See Setup section below.
+
 ## Key Files
 
 | File | Purpose |
@@ -26,12 +30,38 @@ Single Node.js process that connects to Discord, routes messages to Claude Agent
 | `/customize` | Adding channels, integrations, changing behavior |
 | `/debug` | Container issues, logs, troubleshooting |
 
+## Secret Management
+
+NanoClaw uses **envoak encryption** for all secrets (Discord bot token, Claude OAuth token). Never use plaintext `.env` files.
+
+**Setup:**
+```bash
+# Store encryption key (already done if migrating)
+echo "ENCRYPTION_KEY_HERE" > .envoak_key
+chmod 600 .envoak_key
+
+# Add secrets to encrypted storage
+ENVOAK_KEY=$(cat .envoak_key) envoak push DISCORD_BOT_TOKEN="..."
+ENVOAK_KEY=$(cat .envoak_key) envoak push CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-..."
+
+# Run with envoak inject (package.json scripts already configured)
+npm run dev   # Uses envoak inject automatically
+npm run auth  # For Discord OAuth flow
+```
+
+**Files:**
+- ✅ Commit: `config.enc` (encrypted secrets)
+- ❌ Never commit: `.envoak_key`, `.env`
+- See `.gitignore` for complete list
+
+**CRITICAL:** Never hardcode secrets in package.json or any tracked files. See `docs/LESSONS_LEARNED.md` Pattern 1.
+
 ## Development
 
 Run commands directly—don't tell the user to run them.
 
 ```bash
-npm run dev          # Run with hot reload
+npm run dev          # Run with hot reload (uses envoak inject)
 npm run build        # Compile TypeScript
 ./container/build.sh # Rebuild agent container
 ```
