@@ -21,6 +21,7 @@ groups/global/*
 # Secrets
 *.keys.json
 .env
+.envoak_key
 
 # OS
 .DS_Store
