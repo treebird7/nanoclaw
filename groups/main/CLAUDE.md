@@ -26,6 +26,29 @@ Key paths inside the container:
 - `/workspace/project/store/messages.db` (registered_groups table) - Group config
 - `/workspace/project/groups/` - All group folders
 
+## Available Tools & MCPs
+
+You have access to specialized tools mounted in `/workspace/extra/`:
+
+### MCPs (via MCP protocol)
+- **toak** - Task management and collaboration (toaklink_send, inbox, collab, invoak, agents)
+- **envoak** - Secret management (encrypt/decrypt config files)
+- **watsan** - File watching and monitoring
+
+### CLIs (via Bash)
+- **yosef** (`/workspace/extra/yosef`) - Research/verification agent
+  ```bash
+  tsx /workspace/extra/yosef/src/cli.ts wake     # Start session
+  tsx /workspace/extra/yosef/src/cli.ts hello    # Show capabilities
+  ```
+
+- **spidersan** (`/workspace/extra/spidersan`) - Branch coordination for multi-agent work
+  ```bash
+  node /workspace/extra/spidersan/dist/cli.js register --files "path/to/file.ts"
+  node /workspace/extra/spidersan/dist/cli.js conflicts
+  node /workspace/extra/spidersan/dist/cli.js merge-order
+  ```
+
 ---
 
 ## Managing Groups
