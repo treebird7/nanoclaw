@@ -1,6 +1,6 @@
 ---
 name: add-channel
-description: Add or switch messaging channels in NanoClaw. Choose from Discord, Telegram, Gmail, or X (Twitter). Use when the user wants to add a new channel, switch transports, or set up multi-channel messaging. Triggers on "add channel", "switch channel", "discord", "telegram", "gmail", "twitter", "messaging", "transport".
+description: Add or switch messaging channels in NanoClaw. Choose from WhatsApp (default), Discord, Telegram, Gmail, or X (Twitter). Supports single channel or multi-channel setups. Use when the user wants to add a new channel, switch transports, or set up multi-channel messaging. Triggers on "add channel", "switch channel", "discord", "telegram", "gmail", "twitter", "messaging", "transport".
 disable-model-invocation: true
 ---
 
@@ -8,595 +8,462 @@ disable-model-invocation: true
 
 NanoClaw supports multiple messaging transports. This skill helps you add, replace, or configure any of them.
 
-**Ask the user which channel they want.** If they've already specified, skip to that section.
+## Step 1: Ask What They Want
+
+**If the user hasn't specified, ask:**
+
+"Which messaging channel(s) would you like to use?
+
+1. **Keep WhatsApp** (already configured, no changes needed)
+2. **Add Discord** (as primary or alongside WhatsApp)
+3. **Add Telegram** (via `/add-telegram` skill)
+4. **Add Gmail** (via `/add-gmail` skill)
+5. **Add X/Twitter** (via `/x-integration` skill)
+6. **Multiple channels** (run multiple transports simultaneously)
+
+Note: WhatsApp is currently the default transport. You can keep it, replace it, or add other channels alongside it."
 
 ## Available Transports
 
-| Transport | Type | Skill |
-|-----------|------|-------|
-| **Discord** | Replace WhatsApp or standalone | See **Discord** section below |
-| **Telegram** | Replace, alongside, or notification-only | Use `/add-telegram` skill |
-| **Telegram Swarm** | Multi-bot agent teams | Use `/add-telegram-swarm` skill |
-| **Gmail** | Tool mode or full channel mode | Use `/add-gmail` skill |
-| **X (Twitter)** | Browser automation via IPC | Use `/x-integration` skill |
+| Transport | Status | Use Case | Implementation |
+|-----------|--------|----------|----------------|
+| **WhatsApp** | ✅ Default (already in codebase) | Personal messaging, existing setup | Already configured in `src/channels/whatsapp.ts` |
+| **Discord** | 📝 Add via this skill | Discord communities, bot API | See **Discord** section below |
+| **Telegram** | 📝 Add via `/add-telegram` | Telegram groups, bot API | Run `/add-telegram` skill |
+| **Telegram Swarm** | 📝 Add via `/add-telegram-swarm` | Multi-bot agent teams | Run `/add-telegram-swarm` skill |
+| **Gmail** | 📝 Add via `/add-gmail` | Email channel, async responses | Run `/add-gmail` skill |
+| **X (Twitter)** | 📝 Add via `/x-integration` | Twitter DMs, tweets | Run `/x-integration` skill |
 
-## Architecture
+## Architecture: Channel Abstraction
 
-All transports follow the same pattern:
-1. **Client module** (`src/<transport>.ts`) — connects, normalizes messages, sends
-2. **Auth script** (`src/<transport>-auth.ts`) — validates credentials
-3. **Main integration** (`src/index.ts`) — message handler, connection, shutdown
-4. **Config** (`src/config.ts`) — token/key from env vars
-5. **SQLite storage** — unchanged across all transports
+**Important:** NanoClaw uses a modular `Channel` interface in `src/types.ts`:
 
-The core architecture (container runner, task scheduler, IPC, group queue) is transport-agnostic. Only the message I/O layer changes.
+```typescript
+export interface Channel {
+  name: string;
+  connect(): Promise<void>;
+  sendMessage(jid: string, text: string): Promise<void>;
+  isConnected(): boolean;
+  ownsJid(jid: string): boolean;
+  disconnect(): Promise<void>;
+  setTyping?(jid: string, isTyping: boolean): Promise<void>;
+}
+```
+
+All channel implementations go in `src/channels/`:
+- ✅ `src/channels/whatsapp.ts` - Already exists
+- 📝 `src/channels/discord.ts` - Add if user wants Discord
+- 📝 `src/channels/telegram.ts` - Created by `/add-telegram`
+
+**The router (`src/router.ts`) handles multi-channel message routing** - it automatically finds which channel owns a given JID and routes messages accordingly.
 
 ---
 
-## Discord
+## Option 1: Keep WhatsApp (No Changes)
 
-Full migration from WhatsApp (baileys) to Discord (discord.js).
+WhatsApp is already configured and working. No action needed!
 
-**What this changes:**
-- Message I/O: WhatsApp Web (baileys) → Discord Bot API (discord.js)
-- Authentication: QR code → Bot token
-- Channel IDs: WhatsApp JIDs (`@g.us`, `@s.whatsapp.net`) → Discord channel IDs (numeric strings)
-- Message format: WhatsApp-specific → Discord markdown
-- Group discovery: WhatsApp groups → Discord guilds/channels
+**Current setup:**
+- ✅ Client: `src/channels/whatsapp.ts` (implements `Channel`)
+- ✅ Auth: `src/whatsapp-auth.ts`
+- ✅ Integration: `src/index.ts` initializes `WhatsAppChannel`
+- ✅ Dependencies: `@whiskeysockets/baileys`, `qrcode-terminal`
 
-**What stays the same:**
-- SQLite message storage
-- Container agent runner
-- Task scheduler
-- IPC system
-- Group queue and concurrency control
-- All core architecture
+**To verify it's working:**
+```bash
+npm run auth  # Should show QR code
+npm run dev   # Should connect to WhatsApp
+```
 
-### Prerequisites
+---
 
-Before starting, user needs a Discord bot:
+## Option 2: Add Discord
+
+Add Discord **alongside** WhatsApp (multi-channel) or **replace** WhatsApp entirely.
+
+### Step 1: Ask User's Preference
+
+"Do you want to:
+1. **Add Discord alongside WhatsApp** (run both channels simultaneously)
+2. **Replace WhatsApp with Discord** (remove WhatsApp, use only Discord)"
+
+### Step 2: Prerequisites
+
+User needs a Discord bot:
 
 1. Go to https://discord.com/developers/applications
 2. Click "New Application"
-3. Go to "Bot" section → Reset Token → Copy token (save it!)
+3. Go to "Bot" section → Reset Token → Copy token
 4. Enable "Message Content Intent" under Privileged Gateway Intents
-5. Invite bot to server using OAuth2 URL Generator:
-   - Scopes: `bot`
-   - Bot Permissions: Send Messages, Read Message History, Read Messages/View Channels
-6. Copy the generated URL and invite bot to your Discord server
+5. Generate OAuth2 URL (Scopes: `bot`, Permissions: Send Messages, Read Messages, View Channels)
+6. Invite bot to Discord server
 
-Tell user these steps if they haven't done them yet.
+**Save the bot token** - they'll need it in `.env`.
 
-### 1. Update Dependencies
+### Step 3A: Add Discord Alongside WhatsApp (Multi-Channel)
 
-Edit `package.json`:
+This keeps both WhatsApp and Discord running.
 
-#### 1a. Remove WhatsApp dependencies
+#### 3A.1: Add Discord dependency
 
-Remove these from `dependencies`:
-```json
-"@whiskeysockets/baileys": "...",
-"qrcode-terminal": "...",
-```
-
-Remove from `devDependencies`:
-```json
-"@types/qrcode-terminal": "...",
-```
-
-#### 1b. Add Discord dependency
-
-Add to `dependencies`:
+Edit `package.json` → add to `dependencies`:
 ```json
 "discord.js": "^14.18.0"
 ```
 
-#### 1c. Update auth script
-
-Change in `scripts`:
-```json
-"auth": "tsx --env-file=.env src/discord-auth.ts"
+Run:
+```bash
+npm install
 ```
 
-#### 1d. Add env-file flag to dev script
+#### 3A.2: Create Discord channel module
 
-Update `dev` and `auth` scripts to load `.env`:
-```json
-"dev": "tsx --env-file=.env src/index.ts",
-"auth": "tsx --env-file=.env src/discord-auth.ts"
-```
+Create `src/channels/discord.ts` implementing the `Channel` interface:
 
-### 2. Create Discord Client Module
-
-Create new file `src/discord.ts` with Discord.js integration:
-
-**Required exports:**
-- `connectDiscord(token, onMessage, onReady)` - Initialize client with intents
-- `sendDiscordMessage(channelId, text)` - Send message (handle 2000 char limit)
-- `setDiscordTyping(channelId)` - Send typing indicator
-- `getDiscordGuilds()` - Return list of guilds and channels for discovery
-- `stopDiscord()` - Clean shutdown
-- `DiscordMessage` interface - Normalized message format
-
-**Discord client configuration:**
+**Required structure:**
 ```typescript
-new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages,
-  ],
-  partials: [Partials.Channel],
-})
-```
+import { Client, Events, GatewayIntentBits } from 'discord.js';
+import { Channel, OnInboundMessage, OnChatMetadata } from '../types.js';
 
-**Message handler:**
-- Listen to `Events.MessageCreate`
-- Normalize to: `{ channelId, content, authorName, messageId, isBot, timestamp }`
-- Call `onMessage` callback with normalized data
+export interface DiscordChannelOpts {
+  token: string;
+  onMessage: OnInboundMessage;
+  onChatMetadata: OnChatMetadata;
+}
 
-**Send message:**
-- Split messages at 2000 chars (Discord limit)
-- Try to split on newlines when possible
-- Handle TextChannel and DMChannel types
+export class DiscordChannel implements Channel {
+  name = 'discord';
+  private client!: Client;
+  private connected = false;
 
-**Add debug logging** for incoming messages to help troubleshooting.
+  constructor(private opts: DiscordChannelOpts) {}
 
-### 3. Rewrite Main Application
+  async connect(): Promise<void> {
+    // Initialize Discord client with intents
+    // Listen to Events.MessageCreate
+    // Call opts.onMessage() and opts.onChatMetadata() callbacks
+  }
 
-Edit `src/index.ts`:
+  async sendMessage(jid: string, text: string): Promise<void> {
+    // Fetch channel, send message (handle 2000 char limit)
+  }
 
-#### 3a. Update imports
+  isConnected(): boolean {
+    return this.connected;
+  }
 
-Remove:
-```typescript
-import makeWASocket, {
-  DisconnectReason,
-  WASocket,
-  makeCacheableSignalKeyStore,
-  useMultiFileAuthState,
-} from '@whiskeysockets/baileys';
-```
+  ownsJid(jid: string): boolean {
+    // Discord JIDs are numeric channel IDs
+    return /^\d+$/.test(jid);
+  }
 
-Add:
-```typescript
-import {
-  connectDiscord,
-  sendDiscordMessage,
-  setDiscordTyping,
-  getDiscordGuilds,
-  stopDiscord,
-  DiscordMessage,
-} from './discord.js';
-```
+  async disconnect(): Promise<void> {
+    await this.client.destroy();
+  }
 
-Remove `STORE_DIR` from config imports (no longer needed).
-
-Add `DISCORD_BOT_TOKEN` to config imports.
-
-#### 3b. Remove WhatsApp state variables
-
-Delete these global variables:
-- `sock: WASocket`
-- `lidToPhoneMap` (WhatsApp LID mapping)
-- `waConnected` (connection state)
-- `outgoingQueue` and `flushing` (message queue)
-- `groupSyncTimerStarted` (WhatsApp-specific timer)
-
-Keep platform-agnostic variables:
-- `lastTimestamp`, `sessions`, `registeredGroups`, `lastAgentTimestamp`
-- `messageLoopRunning`, `ipcWatcherRunning`
-- `queue` (GroupQueue)
-
-#### 3c. Replace helper functions
-
-**Remove `translateJid()` function** - Not needed for Discord
-
-**Simplify `setTyping()`:**
-```typescript
-async function setTyping(channelId: string, isTyping: boolean): Promise<void> {
-  if (isTyping) {
-    try {
-      await setDiscordTyping(channelId);
-    } catch (err) {
-      logger.debug({ channelId, err }, 'Failed to update typing status');
-    }
+  async setTyping(jid: string, isTyping: boolean): Promise<void> {
+    // Optional: Send typing indicator
   }
 }
 ```
 
-**Simplify `sendMessage()`:**
+**Key implementation details:**
+- Client intents: `Guilds`, `GuildMessages`, `MessageContent`, `DirectMessages`
+- Message normalization: `{ channelId, content, authorName, messageId, isBot, timestamp }`
+- 2000 char limit: Split long messages at newlines
+- JID format: Discord uses numeric channel IDs (e.g., `"1234567890"`)
+
+See WhatsAppChannel (`src/channels/whatsapp.ts`) as reference implementation.
+
+#### 3A.3: Create Discord auth script
+
+Create `src/discord-auth.ts`:
+
 ```typescript
-async function sendMessage(channelId: string, text: string): Promise<void> {
-  try {
-    await sendDiscordMessage(channelId, text);
-  } catch (err) {
-    logger.warn({ channelId, err }, 'Failed to send Discord message');
-  }
-}
-```
-
-**Remove `flushOutgoingQueue()` function** - Discord doesn't need message queuing
-
-#### 3d. Replace group sync function
-
-**Remove `syncGroupMetadata()` function** entirely.
-
-**Create new Discord channel sync function:**
-```typescript
-function syncDiscordChannels(): void {
-  try {
-    logger.info('Syncing channel metadata from Discord...');
-    const guilds = getDiscordGuilds();
-
-    let count = 0;
-    for (const guild of guilds) {
-      for (const channel of guild.channels) {
-        updateChatName(channel.id, `${guild.guildName} / ${channel.name}`);
-        count++;
-      }
-    }
-
-    logger.info({ count }, 'Discord channel metadata synced');
-  } catch (err) {
-    logger.error({ err }, 'Failed to sync Discord channel metadata');
-  }
-}
-```
-
-#### 3e. Update getAvailableGroups()
-
-Change filter condition from:
-```typescript
-.filter((c) => c.jid !== '__group_sync__' && c.jid.endsWith('@g.us'))
-```
-
-To:
-```typescript
-.filter((c) => c.jid !== '__group_sync__')
-```
-
-Discord channels don't have a special suffix like WhatsApp's `@g.us`.
-
-#### 3f. Update message handler
-
-**Remove the `sock.ev.on('messages.upsert')` event handler**.
-
-**Create new Discord message handler:**
-```typescript
-function handleDiscordMessage(msg: DiscordMessage): void {
-  // Ignore bot messages
-  if (msg.isBot) return;
-
-  const channelId = msg.channelId;
-  const timestamp = msg.timestamp;
-
-  // Always store chat metadata for channel discovery
-  storeChatMetadata(channelId, timestamp);
-
-  // Only store full message content for registered channels
-  if (registeredGroups[channelId]) {
-    storeMessage({
-      id: msg.messageId,
-      chatJid: channelId,
-      sender: msg.authorName,
-      senderName: msg.authorName,
-      content: msg.content,
-      timestamp,
-      isFromMe: false,
-    });
-  }
-}
-```
-
-#### 3g. Replace connection function
-
-**Remove entire `connectWhatsApp()` function**.
-
-**Update `main()` function:**
-
-At the top, check for bot token:
-```typescript
+const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN;
 if (!DISCORD_BOT_TOKEN) {
-  console.error('DISCORD_BOT_TOKEN is not set. Set it in your .env or environment.');
+  console.error('DISCORD_BOT_TOKEN not set');
+  process.exit(1);
+}
+
+const res = await fetch('https://discord.com/api/v10/users/@me', {
+  headers: { Authorization: `Bot ${DISCORD_BOT_TOKEN}` },
+});
+
+if (res.ok) {
+  const bot = await res.json();
+  console.log(`✅ Authenticated as ${bot.username} (${bot.id})`);
+} else {
+  console.error(`❌ Failed: HTTP ${res.status}`);
   process.exit(1);
 }
 ```
 
-Replace connection logic:
+Update `package.json` scripts:
+```json
+"auth:discord": "tsx --env-file=.env src/discord-auth.ts"
+```
+
+#### 3A.4: Update main application for multi-channel
+
+Edit `src/index.ts`:
+
+**Add Discord import:**
 ```typescript
-await connectDiscord(DISCORD_BOT_TOKEN, handleDiscordMessage, () => {
-  // On ready: sync channels, start all subsystems
-  syncDiscordChannels();
-  startSchedulerLoop({
-    registeredGroups: () => registeredGroups,
-    getSessions: () => sessions,
-    queue,
-    onProcess: (groupJid, proc, containerName, groupFolder) =>
-      queue.registerProcess(groupJid, proc, containerName, groupFolder),
-    sendMessage,
-    assistantName: ASSISTANT_NAME,
-  });
-  startIpcWatcher();
-  queue.setProcessMessagesFn(processGroupMessages);
-  recoverPendingMessages();
-  startMessageLoop();
+import { DiscordChannel } from './channels/discord.js';
+import { DISCORD_BOT_TOKEN } from './config.js'; // Add to config.ts
+```
+
+**Initialize both channels:**
+```typescript
+const channels: Channel[] = [];
+
+// WhatsApp channel (existing)
+const whatsapp = new WhatsAppChannel({
+  onMessage: (chatJid, msg) => storeMessage(msg),
+  onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+  registeredGroups: () => registeredGroups,
 });
+channels.push(whatsapp);
+
+// Discord channel (new)
+if (DISCORD_BOT_TOKEN) {
+  const discord = new DiscordChannel({
+    token: DISCORD_BOT_TOKEN,
+    onMessage: (chatJid, msg) => storeMessage(msg),
+    onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+  });
+  channels.push(discord);
+}
 ```
 
-**Update shutdown handler:**
+**Connect all channels:**
 ```typescript
-const shutdown = async (signal: string) => {
-  logger.info({ signal }, 'Shutdown signal received');
-  stopDiscord();
-  await queue.shutdown(10000);
-  process.exit(0);
-};
+await whatsapp.connect();
+if (discord) await discord.connect();
 ```
 
-#### 3h. Update IPC refresh_groups handler
-
-In `processTaskIpc()`, update the `refresh_groups` case:
+**Update message sending to use router:**
 ```typescript
-case 'refresh_groups':
-  if (isMain) {
-    logger.info({ sourceGroup }, 'Channel metadata refresh requested via IPC');
-    syncDiscordChannels();
-    // Write updated snapshot immediately
-    const availableGroups = getAvailableGroups();
-    writeGroupsSnapshot(
-      sourceGroup,
-      true,
-      availableGroups,
-      new Set(Object.keys(registeredGroups)),
-    );
-  } else {
-    logger.warn({ sourceGroup }, 'Unauthorized refresh_groups attempt blocked');
-  }
-  break;
+import { routeOutbound } from './router.js';
+
+// Instead of: await whatsapp.sendMessage(jid, text);
+// Use: await routeOutbound(channels, jid, text);
 ```
 
-### 4. Update Database Module
+The router automatically determines which channel owns each JID and routes accordingly.
 
-Edit `src/db.ts`:
-
-#### 4a. Remove baileys import
-
-Delete:
-```typescript
-import { proto } from '@whiskeysockets/baileys';
-```
-
-#### 4b. Make storeMessage generic
-
-Replace the `storeMessage()` function signature from:
-```typescript
-export function storeMessage(
-  msg: proto.IWebMessageInfo,
-  chatJid: string,
-  isFromMe: boolean,
-  pushName?: string,
-): void
-```
-
-To:
-```typescript
-export function storeMessage(msg: {
-  id: string;
-  chatJid: string;
-  sender: string;
-  senderName: string;
-  content: string;
-  timestamp: string;
-  isFromMe: boolean;
-}): void
-```
-
-Update the function body to use the new parameter names directly instead of extracting from WhatsApp proto structure.
-
-### 5. Create Discord Auth Script
-
-Create new file `src/discord-auth.ts`:
-
-**Purpose:** Validate Discord bot token by making API call
-
-**Implementation:**
-- Check `process.env.DISCORD_BOT_TOKEN` exists
-- Make fetch request to `https://discord.com/api/v10/users/@me` with `Authorization: Bot ${token}` header
-- On success: print bot username and ID
-- On failure: print HTTP status and error message
-- Exit with code 1 on failure, 0 on success
-
-Keep it simple (~25 lines total).
-
-### 6. Delete WhatsApp Auth Script
-
-Delete `src/whatsapp-auth.ts` - no longer needed.
-
-### 7. Update Configuration
+#### 3A.5: Update config
 
 Edit `src/config.ts`:
-
-#### 7a. Change default assistant name
-
-```typescript
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'sansan';
-```
-
-You can use any name - 'sansan' was the example but user can choose their preference.
-
-#### 7b. Add Discord bot token
 
 ```typescript
 export const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
 ```
-
-### 8. Update Group Memory Files
-
-#### 8a. Update `groups/global/CLAUDE.md`
-
-**Changes:**
-- Replace assistant name (Andy → your chosen name)
-- Update message formatting section from WhatsApp to Discord markdown:
-
-```markdown
-## Message Formatting
-
-Use standard Discord markdown:
-- **bold** (double asterisks)
-- *italic* (single asterisks)
-- `inline code` (backticks)
-- ```code blocks``` (triple backticks)
-- > blockquotes
-- - bullet lists
-- [links](url)
-
-Discord supports full markdown, so use it naturally.
-```
-
-#### 8b. Update `groups/main/CLAUDE.md`
-
-Same changes as global, plus update the admin context:
-
-**Available groups section:**
-- Change JID examples from WhatsApp format (`120363336345536173@g.us`) to Discord channel IDs (numeric strings like `1234567890`)
-- Update description: "Groups are ordered by most recent activity. The list is synced from Discord guild channels."
-- Change "WhatsApp" references to "Discord"
-
-**Registered groups section:**
-- Update JID description: "The Discord channel ID (unique identifier for the channel)"
-- Update trigger description for DM channels
-
-### 9. Update Documentation
-
-#### 9a. Update `CLAUDE.md`
-
-Change:
-```markdown
-Single Node.js process that connects to WhatsApp, routes messages...
-```
-
-To:
-```markdown
-Single Node.js process that connects to Discord, routes messages...
-```
-
-Update Key Files table:
-```markdown
-| `src/index.ts` | Main app: Discord connection, message routing, IPC |
-```
-
-#### 9b. Update `README.md`
-
-**What It Supports section:**
-- Change "WhatsApp I/O" → "Discord I/O - Message Claude from Discord (channels, DMs, servers)"
-- Change "Isolated group context" → "Isolated channel context"
-
-**Architecture section:**
-```markdown
-Discord (discord.js) --> SQLite --> Polling loop --> Container (Claude Agent SDK) --> Response
-```
-
-#### 9c. Update `docs/REQUIREMENTS.md`
-
-- Change "WhatsApp" references → "Discord"
-- Update integration section with Discord bot details
-
-#### 9d. Update `.env-example`
-
-Add Discord bot token:
-```
-# Discord Bot Token - get from https://discord.com/developers/applications
-DISCORD_BOT_TOKEN=
-```
-
-### 10. Install Dependencies and Build
-
-```bash
-npm install
-npm run build
-```
-
-Fix any TypeScript errors that appear.
-
-### 11. Configure and Test
-
-#### 11a. Set bot token
 
 Add to `.env`:
 ```
 DISCORD_BOT_TOKEN=your_bot_token_here
 ```
 
-#### 11b. Validate token
+#### 3A.6: Test multi-channel setup
 
 ```bash
-npm run auth
+npm run auth           # Test WhatsApp (QR code)
+npm run auth:discord   # Test Discord (bot username)
+npm run dev            # Both channels should connect
 ```
 
-Should print: `Authenticated as YourBotName (bot_id)`
+Messages from WhatsApp chats go through WhatsAppChannel, messages from Discord channels go through DiscordChannel.
 
-#### 11c. Start bot
+### Step 3B: Replace WhatsApp with Discord (Single Channel)
+
+This removes WhatsApp entirely and uses only Discord.
+
+Follow steps 3A.1 and 3A.2 to create Discord channel module, then:
+
+#### 3B.1: Remove WhatsApp dependencies
+
+Edit `package.json` - remove from `dependencies`:
+```json
+"@whiskeysockets/baileys": "...",
+"qrcode-terminal": "..."
+```
+
+Remove from `devDependencies`:
+```json
+"@types/qrcode-terminal": "..."
+```
+
+#### 3B.2: Update main application
+
+Edit `src/index.ts`:
+
+**Remove WhatsApp import:**
+```typescript
+// Delete: import { WhatsAppChannel } from './channels/whatsapp.js';
+```
+
+**Add Discord import:**
+```typescript
+import { DiscordChannel } from './channels/discord.js';
+import { DISCORD_BOT_TOKEN } from './config.js';
+```
+
+**Initialize only Discord:**
+```typescript
+const discord = new DiscordChannel({
+  token: DISCORD_BOT_TOKEN,
+  onMessage: (chatJid, msg) => storeMessage(msg),
+  onChatMetadata: (chatJid, timestamp) => storeChatMetadata(chatJid, timestamp),
+});
+
+await discord.connect();
+```
+
+**Update message sending:**
+```typescript
+// Replace: await whatsapp.sendMessage(jid, text);
+// With: await discord.sendMessage(jid, text);
+```
+
+#### 3B.3: Delete WhatsApp files
 
 ```bash
-npm run dev
+rm src/channels/whatsapp.ts
+rm src/channels/whatsapp.test.ts
+rm src/whatsapp-auth.ts
 ```
 
-#### 11d. Register main channel
+#### 3B.4: Update config
 
-Get your Discord channel ID (enable Developer Mode in Discord settings, right-click channel, Copy Channel ID).
+Edit `src/config.ts`:
+
+```typescript
+// Remove: export const ASSISTANT_HAS_OWN_NUMBER = ...;
+// Add:
+export const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+```
+
+Update `.env`:
+```
+DISCORD_BOT_TOKEN=your_bot_token_here
+```
+
+#### 3B.5: Update package.json scripts
+
+```json
+"auth": "tsx --env-file=.env src/discord-auth.ts"
+```
+
+#### 3B.6: Install and test
 
 ```bash
-sqlite3 store/messages.db "
-INSERT INTO registered_groups (jid, name, folder, trigger_pattern, added_at, requires_trigger)
-VALUES ('YOUR_CHANNEL_ID', 'Main Channel', 'main', '@yourname', datetime('now'), 0);
-"
+npm install            # Remove WhatsApp deps, add Discord
+npm run auth           # Test Discord bot token
+npm run dev            # Should connect to Discord only
 ```
 
-#### 11e. Test messaging
+### Step 4: Update Documentation
 
-Send a message in your Discord channel. Bot should respond within 2 seconds.
+After adding Discord (with or without WhatsApp), update:
 
-### Troubleshooting
+- `CLAUDE.md` - Mention Discord in "Quick Context"
+- `README.md` - Update "What It Supports" and architecture diagram
+- `groups/main/CLAUDE.md` - Update JID examples (Discord uses numeric channel IDs)
 
-**Bot not receiving messages:**
-- Verify "Message Content Intent" is enabled in Discord Developer Portal
-- Check bot has "Read Messages" and "View Channel" permissions
-- Restart bot with `LOG_LEVEL=debug npm run dev`
+---
 
-**Bot token invalid:**
-- Regenerate token in Discord Developer Portal
-- Run `npm run auth` to verify
+## Option 3: Add Telegram
 
-**Messages not being stored:**
-- Check channel is registered in `registered_groups` table
-- Verify `handleDiscordMessage` is being called
+Use the `/add-telegram` skill - it handles Telegram bot setup.
 
-**Container issues:**
-- Same as before - use `/debug` skill
+**What it does:**
+- Creates `src/channels/telegram.ts` implementing `Channel`
+- Adds Telegram bot authentication
+- Supports control-only mode (trigger actions) or full channel mode
+- Can run alongside WhatsApp and/or Discord
 
-### Summary of Changes
+---
 
-| File | Change Type |
-|------|-------------|
-| `package.json` | Dependencies, scripts |
-| `src/discord.ts` | **New** - Discord client module |
-| `src/discord-auth.ts` | **New** - Token validation |
-| `src/whatsapp-auth.ts` | **Deleted** |
-| `src/index.ts` | Replace WhatsApp with Discord |
-| `src/db.ts` | Generic storeMessage interface |
-| `src/config.ts` | Add DISCORD_BOT_TOKEN |
-| `groups/global/CLAUDE.md` | Formatting, name |
-| `groups/main/CLAUDE.md` | Discord IDs, formatting |
-| `CLAUDE.md` | Platform references |
-| `README.md` | Platform references |
-| `docs/REQUIREMENTS.md` | Architecture docs |
-| `.env-example` | Add Discord token |
+## Option 4: Add Gmail
 
-**Files NOT changed:**
-- `src/container-runner.ts` - Platform-agnostic
-- `src/group-queue.ts` - Platform-agnostic
-- `src/task-scheduler.ts` - Platform-agnostic
-- `src/types.ts` - Already generic
-- All container and Docker files
+Use the `/add-gmail` skill - it sets up Gmail as a channel.
+
+**Modes:**
+- **Tool mode** - Agent can read/send emails when triggered from other channels
+- **Channel mode** - Emails can trigger the agent and receive responses
+
+---
+
+## Option 5: Add X (Twitter)
+
+Use the `/x-integration` skill - adds Twitter DM and tweet capabilities via browser automation.
+
+---
+
+## Option 6: Multiple Channels Simultaneously
+
+To run multiple channels at once (e.g., WhatsApp + Discord + Telegram):
+
+1. Follow the "Add alongside" instructions for each channel
+2. Each channel implements the `Channel` interface
+3. Add all channels to the `channels` array in `src/index.ts`
+4. Use `routeOutbound(channels, jid, text)` for message sending
+5. The router automatically determines which channel owns each JID
+
+**Example multi-channel setup:**
+```typescript
+const channels: Channel[] = [
+  new WhatsAppChannel({...}),
+  new DiscordChannel({...}),
+  new TelegramChannel({...}),
+];
+
+for (const channel of channels) {
+  await channel.connect();
+}
+```
+
+Messages are routed based on JID format:
+- `@g.us` or `@s.whatsapp.net` → WhatsAppChannel
+- Numeric IDs like `"1234567890"` → DiscordChannel
+- `chat:123456` → TelegramChannel
+
+---
+
+## Troubleshooting
+
+**Channel not connecting:**
+- Verify token/credentials with auth script (`npm run auth`, `npm run auth:discord`, etc.)
+- Check bot permissions in platform settings
+- Review logs: `LOG_LEVEL=debug npm run dev`
+
+**Messages not routing:**
+- Verify channel implements `ownsJid()` correctly
+- Check router logs to see which channel is selected
+- Ensure JID format matches channel expectations
+
+**Type errors:**
+- Make sure all channels implement the `Channel` interface
+- Check callback signatures match `OnInboundMessage` and `OnChatMetadata`
+
+**Multi-channel conflicts:**
+- Each channel should recognize its own JID format via `ownsJid()`
+- Channels should not overlap in JID ownership
+
+---
+
+## Summary
+
+| Want to... | Do this |
+|------------|---------|
+| Keep using WhatsApp | Nothing - it's already configured |
+| Add Discord alongside WhatsApp | Follow "Add Discord Alongside" (multi-channel) |
+| Switch from WhatsApp to Discord | Follow "Replace WhatsApp with Discord" (single channel) |
+| Add Telegram | Run `/add-telegram` skill |
+| Add Gmail | Run `/add-gmail` skill |
+| Add X/Twitter | Run `/x-integration` skill |
+| Run multiple channels | Follow multi-channel pattern for each channel |
+
+All channels use the same core architecture - only the message I/O layer changes. The `Channel` interface and router handle the rest.
