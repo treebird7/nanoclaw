@@ -1,5 +1,6 @@
 import { Client, Events, GatewayIntentBits, TextChannel, DMChannel, ChannelType, Partials } from 'discord.js';
 import { logger } from './logger.js';
+import { initTranscription, transcribeVoiceMessage, hasVoiceAttachment } from './transcription.js';
 
 export interface DiscordMessage {
   channelId: string;
@@ -33,17 +34,39 @@ export async function connectDiscord(
     partials: [Partials.Channel],
   });
 
-  client.on(Events.MessageCreate, (message) => {
+  initTranscription();
+
+  client.on(Events.MessageCreate, async (message) => {
+    let content = message.content;
+
+    // Transcribe voice/audio attachments
+    if (message.attachments.size > 0) {
+      const attachments = Array.from(message.attachments.values());
+      if (hasVoiceAttachment(attachments)) {
+        const voiceAttachment = attachments.find(
+          (att) =>
+            att.contentType?.startsWith('audio/') ||
+            ['ogg', 'mp3', 'm4a', 'wav', 'webm'].some((ext) => att.name?.endsWith(`.${ext}`)),
+        );
+        if (voiceAttachment) {
+          const transcript = await transcribeVoiceMessage(voiceAttachment);
+          if (transcript) {
+            content = `[Voice: ${transcript}]`;
+          }
+        }
+      }
+    }
+
     logger.debug({
       channelId: message.channelId,
       author: message.author.username,
-      content: message.content.slice(0, 50),
+      content: content.slice(0, 50),
       isBot: message.author.bot
     }, 'Discord message received');
 
     onMessage({
       channelId: message.channelId,
-      content: message.content,
+      content,
       authorName: message.author.displayName || message.author.username,
       messageId: message.id,
       isBot: message.author.bot,

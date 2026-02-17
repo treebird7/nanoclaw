@@ -18,6 +18,7 @@
     "cron-parser": "^5.5.0",
     "discord.js": "^14.18.0",
     "elevenlabs": "^1.59.0",
+    "openai": "^4.77.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",
     "zod": "^4.3.6"
