@@ -234,4 +234,65 @@ echo ".envoak_key" >> .gitignore
 
 ---
 
-*Last updated: 2026-02-15*
+### Lesson 6: `.mcp.json` Must Be Gitignored Before First Commit
+**Discovered:** 2026-02-18
+**Source:** Security audit found TOAK_API_KEY and ENVOAK_KEY exposed in public GitHub repo
+**Confidence:** HIGH
+**Severity:** 🚨 CRITICAL
+
+**Problem:**
+`.mcp.json` contains plaintext MCP server credentials (API keys, encryption keys). It was committed in the very first commit and pushed to a public GitHub fork, exposing all secrets to the internet.
+
+**Anti-pattern:**
+```bash
+# First commit includes .mcp.json with secrets
+git add .
+git commit -m "initial commit"  # .mcp.json is now in git history forever
+```
+
+**What was exposed:**
+```json
+{
+  "mcpServers": {
+    "toak": { "env": { "TOAK_API_KEY": "plaintext-key-here" } },
+    "envoak": { "env": { "ENVOAK_KEY": "plaintext-key-here" } }
+  }
+}
+```
+
+**Correct pattern:**
+```bash
+# BEFORE the first commit
+echo ".mcp.json" >> .gitignore
+git add .gitignore
+git commit -m "init: add gitignore with secret patterns"
+# Now safe to create .mcp.json locally
+```
+
+**Recovery steps (what we did):**
+1. `git rm --cached .mcp.json` — untrack without deleting local file
+2. Add `.mcp.json` to `.gitignore`
+3. Rotate ALL keys that were in the file (TOAK_API_KEY, ENVOAK_KEY)
+4. Rotate ALL keys in `config.enc` too (DISCORD_BOT_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, OPENAI_API_KEY) since ENVOAK_KEY was exposed
+5. Update downstream services with new keys (hub, Railway)
+6. Add `.mcp.json` to mount-allowlist blockedPatterns
+
+**Rules:**
+1. `.mcp.json` goes in `.gitignore` **before the first commit**, every time
+2. Treat `.mcp.json` like `.env` — it contains secrets, never track it
+3. If exposed: rotate every key in the file AND every key encrypted by any exposed encryption key
+4. `git rm --cached` only removes from future commits — the key is still in git history
+5. Add to mount-allowlist blockedPatterns so containers can't read it either
+
+**Detection:**
+```bash
+# Check if .mcp.json is tracked
+git ls-files .mcp.json
+
+# Check if it was ever committed
+git log --all --oneline -- .mcp.json
+```
+
+---
+
+*Last updated: 2026-02-18*
