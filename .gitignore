@@ -21,7 +21,10 @@ groups/global/*
 # Secrets
 *.keys.json
 .env
+.env-mine.txt
 .envoak_key
+.mcp.json
+config.enc
 
 # OS
 .DS_Store

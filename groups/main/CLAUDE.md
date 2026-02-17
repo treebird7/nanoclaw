@@ -29,6 +29,7 @@ Key paths inside the container:
 - `/workspace/extra/sansan-knowledge/knowledge/` - Treebird knowledge base (synced hourly)
 - `/workspace/extra/sansan-knowledge/waltsan/` - Waltsan dreams, criticism, razor docs (synced hourly)
 - `/workspace/extra/sansan-knowledge/collab/` - Daily and topic collab logs (synced hourly)
+- `/workspace/extra/sansan-knowledge/sansan-podcasts/` - Sansan/Cosan podcast content (synced hourly)
 
 To trigger an immediate sync (requires user approval first):
 ```bash

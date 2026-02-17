@@ -14,6 +14,7 @@ import {
   POLL_INTERVAL,
   TIMEZONE,
   TRIGGER_PATTERN,
+  escapeRegex,
 } from './config.js';
 import {
   AvailableGroup,
@@ -199,7 +200,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     // Use per-group trigger pattern for multi-agent channels
-    const triggerPattern = new RegExp(`^${group.trigger}\\b`, 'i');
+    const triggerPattern = new RegExp(`^${escapeRegex(group.trigger)}\\b`, 'i');
     const hasTrigger = missedMessages.some((m) =>
       triggerPattern.test(m.content.trim()),
     );
@@ -743,12 +744,16 @@ async function processTaskIpc(
         break;
       }
       if (data.jid && data.name && data.folder && data.trigger) {
+        // Validate folder name: no traversal, only safe characters
+        if (/[.\/\\]/.test(data.folder) || data.folder.includes('..')) {
+          logger.warn({ folder: data.folder }, 'Invalid folder name rejected (path traversal)');
+          break;
+        }
         registerGroup(data.jid, {
           name: data.name,
           folder: data.folder,
           trigger: data.trigger,
           added_at: new Date().toISOString(),
-          containerConfig: data.containerConfig,
         });
       } else {
         logger.warn(
@@ -768,7 +773,7 @@ async function processTaskIpc(
         const mainJid = Object.entries(registeredGroups).find(([, g]) => g.folder === MAIN_GROUP_FOLDER)?.[0];
         logger.info('Knowledge sync triggered via IPC');
         try {
-          execSync('/bin/bash /Users/macbook/Dev/sansan-knowledge/sync.sh', { stdio: 'pipe' });
+          execSync('/bin/bash /Users/macbook/Dev/sansan-knowledge/sync.sh', { stdio: 'pipe', timeout: 60000 });
           logger.info('Knowledge sync completed');
           if (mainJid) sendDiscordMessage(mainJid, '✅ Knowledge synced from treebird-internal.');
         } catch (err) {
@@ -855,7 +860,7 @@ async function startMessageLoop(): Promise<void> {
           // context when a trigger eventually arrives.
           if (needsTrigger) {
             // Use per-group trigger pattern for multi-agent channels
-            const triggerPattern = new RegExp(`^${group.trigger}\\b`, 'i');
+            const triggerPattern = new RegExp(`^${escapeRegex(group.trigger)}\\b`, 'i');
             const hasTrigger = groupMessages.some((m) =>
               triggerPattern.test(m.content.trim()),
             );
