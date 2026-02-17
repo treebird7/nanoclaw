@@ -20,11 +20,20 @@ Main has access to the entire project:
 |----------------|-----------|--------|
 | `/workspace/project` | Project root | read-write |
 | `/workspace/group` | `groups/main/` | read-write |
+| `/workspace/extra/sansan-knowledge` | `sansan-knowledge` repo | read-only |
 
 Key paths inside the container:
 - `/workspace/project/store/messages.db` - SQLite database
 - `/workspace/project/store/messages.db` (registered_groups table) - Group config
 - `/workspace/project/groups/` - All group folders
+- `/workspace/extra/sansan-knowledge/knowledge/` - Treebird knowledge base (synced hourly)
+- `/workspace/extra/sansan-knowledge/waltsan/` - Waltsan dreams, criticism, razor docs (synced hourly)
+- `/workspace/extra/sansan-knowledge/collab/` - Daily and topic collab logs (synced hourly)
+
+To trigger an immediate sync (requires user approval first):
+```bash
+echo '{"type": "sync_knowledge"}' > /workspace/ipc/tasks/sync_$(date +%s).json
+```
 
 ## Available Tools & MCPs
 

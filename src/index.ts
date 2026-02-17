@@ -758,6 +758,26 @@ async function processTaskIpc(
       }
       break;
 
+    case 'sync_knowledge':
+      // Only main group can trigger a knowledge sync
+      if (!isMain) {
+        logger.warn({ sourceGroup }, 'Unauthorized sync_knowledge attempt blocked');
+        break;
+      }
+      {
+        const mainJid = Object.entries(registeredGroups).find(([, g]) => g.folder === MAIN_GROUP_FOLDER)?.[0];
+        logger.info('Knowledge sync triggered via IPC');
+        try {
+          execSync('/bin/bash /Users/macbook/Dev/sansan-knowledge/sync.sh', { stdio: 'pipe' });
+          logger.info('Knowledge sync completed');
+          if (mainJid) sendDiscordMessage(mainJid, '✅ Knowledge synced from treebird-internal.');
+        } catch (err) {
+          logger.error({ err }, 'Knowledge sync failed');
+          if (mainJid) sendDiscordMessage(mainJid, '❌ Knowledge sync failed — check /tmp/sansan-knowledge-sync.log');
+        }
+      }
+      break;
+
     default:
       logger.warn({ type: data.type }, 'Unknown IPC task type');
   }
