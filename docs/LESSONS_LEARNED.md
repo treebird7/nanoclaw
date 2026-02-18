@@ -295,4 +295,133 @@ git log --all --oneline -- .mcp.json
 
 ---
 
+## Security Architecture
+
+### Lesson 7: Layered Secret Protection — Belt + Suspenders
+**Discovered:** 2026-02-18
+**Source:** Cherry-picking upstream security commits while preserving envoak integration
+**Confidence:** HIGH
+
+**Problem:** Two independent security fixes for container secret leakage existed in parallel:
+1. Fork's approach: pass secrets via `readSecrets()` → `input.secrets` → stdin JSON, never in process.env
+2. Private branch: envoak-injected vars via env-dir mount into container filesystem
+
+**Solution:** Keep both — they protect different attack surfaces:
+
+```typescript
+// container-runner.ts: env-dir mount (envoak path)
+// Reads from process.env (envoak-injected) first, falls back to .env
+// Written to /workspace/env-dir/env — container reads on startup
+
+// Also: readSecrets() → input.secrets → stdin JSON
+// Deleted from memory immediately after container reads it
+input.secrets = readSecrets();
+container.stdin.write(JSON.stringify(input));
+container.stdin.end();
+delete input.secrets; // never in logs
+```
+
+```typescript
+// container/agent-runner/src/index.ts: sdkEnv (never touch process.env)
+const sdkEnv: Record<string, string | undefined> = { ...process.env };
+for (const [key, value] of Object.entries(containerInput.secrets || {})) {
+  sdkEnv[key] = value; // secrets only in SDK call, not process.env
+}
+// + PreToolUse hook strips secrets from every Bash subprocess
+```
+
+**Why both:**
+- env-dir mount = Apple Container workaround (stdin pipe needs explicit env file)
+- sdkEnv = SDK-only secret scope (Bash subprocesses can't see API keys)
+- PreToolUse hook = defense in depth (even if sdkEnv leaks, Bash unsets them)
+
+---
+
+### Lesson 8: PreToolUse Hook for Bash Secret Sanitization
+**Discovered:** 2026-02-18
+**Source:** `1a07869` — security: sanitize env vars from agent Bash subprocesses
+**Confidence:** HIGH
+**Severity:** 🔒 SECURITY
+
+**Problem:** Agent Bash subprocesses could exfiltrate secrets via `env`, `printenv`, or `echo $VAR`.
+
+**Solution:** Register a `PreToolUse` SDK hook that prepends `unset SECRET_VARS` to every Bash command:
+
+```typescript
+const SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
+
+function createSanitizeBashHook(): HookCallback {
+  return async (input, _toolUseId, _context) => {
+    const preInput = input as PreToolUseHookInput;
+    const command = (preInput.tool_input as { command?: string })?.command;
+    if (!command) return {};
+
+    const unsetPrefix = `unset ${SECRET_ENV_VARS.join(' ')} 2>/dev/null; `;
+    return {
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        updatedInput: {
+          ...(preInput.tool_input as Record<string, unknown>),
+          command: unsetPrefix + command,
+        },
+      },
+    };
+  };
+}
+
+// Register in query options:
+hooks: {
+  PreCompact: [{ hooks: [createPreCompactHook()] }],
+  PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook()] }],
+}
+```
+
+**Impact:** Closes all known exfiltration vectors — `env`, `printenv`, `echo $ANTHROPIC_API_KEY` all return empty.
+
+---
+
+## Workflow
+
+### Lesson 9: Use Spidersan Before Cherry-Picking From a Fork
+**Discovered:** 2026-02-18
+**Source:** Syncing `treebird7/nanoclaw` (public fork) → `treebird7/nanoclaw-private`
+**Confidence:** HIGH
+
+**Problem:** Naively merging a fork's commits can silently overwrite private-branch changes (e.g. Discord replacing WhatsApp).
+
+**Spidersan workflow that prevented this:**
+
+```bash
+# 1. Init spidersan in the repo
+spidersan init
+
+# 2. Register private branch files
+spidersan register --files "src/discord.ts,src/config.ts,..." \
+  --agent nanoclaw-private -d "Discord migration"
+
+# 3. Create local branch from fork, register it
+git checkout -b fork-candidate fork/main
+spidersan register --files "src/whatsapp.ts,src/config.ts,..." \
+  --agent nanoclaw-fork -d "Upstream fork commits"
+
+# 4. Run conflict detection
+spidersan conflicts
+# → 🔴 TIER 3 BLOCK: src/whatsapp-auth.ts
+# → 🟠 PAUSE: package.json, src/config.ts, src/index.ts, src/container-runner.ts
+
+# 5. Per-commit analysis instead of merge
+git log --oneline private/main..fork/main
+git diff --name-only <sha>^..<sha>   # per commit
+# → Classify: SAFE / NEEDS-REVIEW / SKIP
+```
+
+**Key insight:** `spidersan conflicts` revealed the exact files at risk *before* touching anything. Without it, a `git merge fork/main` would have silently reintroduced WhatsApp code and broken the Discord integration.
+
+**Skip criteria (from this session):**
+- Fork commits that touch files where your branch has fundamentally replaced the implementation (WhatsApp → Discord)
+- Large refactors (`2b56fec` Refactor index) that assume a different architecture
+- CI workflows that test functionality you no longer have (WhatsApp tests)
+
+---
+
 *Last updated: 2026-02-18*
