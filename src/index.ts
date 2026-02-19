@@ -43,9 +43,11 @@ import { logger } from './logger.js';
 export { escapeXml, formatMessages } from './router.js';
 
 let lastTimestamp = '';
+let lastId = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+let lastAgentId: Record<string, string> = {};
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
@@ -53,12 +55,20 @@ const queue = new GroupQueue();
 
 function loadState(): void {
   lastTimestamp = getRouterState('last_timestamp') || '';
+  lastId = getRouterState('last_id') || '';
   const agentTs = getRouterState('last_agent_timestamp');
   try {
     lastAgentTimestamp = agentTs ? JSON.parse(agentTs) : {};
   } catch {
     logger.warn('Corrupted last_agent_timestamp in DB, resetting');
     lastAgentTimestamp = {};
+  }
+  const agentId = getRouterState('last_agent_id');
+  try {
+    lastAgentId = agentId ? JSON.parse(agentId) : {};
+  } catch {
+    logger.warn('Corrupted last_agent_id in DB, resetting');
+    lastAgentId = {};
   }
   sessions = getAllSessions();
   registeredGroups = getAllRegisteredGroups();
@@ -70,9 +80,14 @@ function loadState(): void {
 
 function saveState(): void {
   setRouterState('last_timestamp', lastTimestamp);
+  setRouterState('last_id', lastId);
   setRouterState(
     'last_agent_timestamp',
     JSON.stringify(lastAgentTimestamp),
+  );
+  setRouterState(
+    'last_agent_id',
+    JSON.stringify(lastAgentId),
   );
 }
 
@@ -124,7 +139,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   const isMainGroup = group.folder === MAIN_GROUP_FOLDER;
 
   const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-  const missedMessages = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+  const sinceId = lastAgentId[chatJid] || '';
+  const missedMessages = getMessagesSince(chatJid, sinceTimestamp, sinceId, ASSISTANT_NAME);
 
   if (missedMessages.length === 0) return true;
 
@@ -141,8 +157,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
   const previousCursor = lastAgentTimestamp[chatJid] || '';
+  const previousCursorId = lastAgentId[chatJid] || '';
   lastAgentTimestamp[chatJid] =
     missedMessages[missedMessages.length - 1].timestamp;
+  lastAgentId[chatJid] =
+    missedMessages[missedMessages.length - 1].id;
   saveState();
 
   logger.info(
@@ -197,6 +216,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     }
     // Roll back cursor so retries can re-process these messages
     lastAgentTimestamp[chatJid] = previousCursor;
+    lastAgentId[chatJid] = previousCursorId;
     saveState();
     logger.warn({ group: group.name }, 'Agent error, rolled back message cursor for retry');
     return false;
@@ -296,13 +316,14 @@ async function startMessageLoop(): Promise<void> {
   while (true) {
     try {
       const jids = Object.keys(registeredGroups);
-      const { messages, newTimestamp } = getNewMessages(jids, lastTimestamp, ASSISTANT_NAME);
+      const { messages, newTimestamp, newId } = getNewMessages(jids, lastTimestamp, lastId, ASSISTANT_NAME);
 
       if (messages.length > 0) {
         logger.info({ count: messages.length }, 'New messages');
 
         // Advance the "seen" cursor for all messages immediately
         lastTimestamp = newTimestamp;
+        lastId = newId;
         saveState();
 
         // Deduplicate by group
@@ -338,6 +359,7 @@ async function startMessageLoop(): Promise<void> {
           const allPending = getMessagesSince(
             chatJid,
             lastAgentTimestamp[chatJid] || '',
+            lastAgentId[chatJid] || '',
             ASSISTANT_NAME,
           );
           const messagesToSend =
@@ -351,6 +373,8 @@ async function startMessageLoop(): Promise<void> {
             );
             lastAgentTimestamp[chatJid] =
               messagesToSend[messagesToSend.length - 1].timestamp;
+            lastAgentId[chatJid] =
+              messagesToSend[messagesToSend.length - 1].id;
             saveState();
             // Show typing indicator while the container processes the piped message
             whatsapp.setTyping(chatJid, true);
@@ -374,7 +398,8 @@ async function startMessageLoop(): Promise<void> {
 function recoverPendingMessages(): void {
   for (const [chatJid, group] of Object.entries(registeredGroups)) {
     const sinceTimestamp = lastAgentTimestamp[chatJid] || '';
-    const pending = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME);
+    const sinceId = lastAgentId[chatJid] || '';
+    const pending = getMessagesSince(chatJid, sinceTimestamp, sinceId, ASSISTANT_NAME);
     if (pending.length > 0) {
       logger.info(
         { group: group.name, pendingCount: pending.length },
