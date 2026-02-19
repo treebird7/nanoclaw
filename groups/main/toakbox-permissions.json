@@ -1,0 +1,37 @@
+{
+  "whitelist": {
+    "agents": [
+      "sasusan", "treesan", "sherlocksan", "codex", "birdsan",
+      "mappersan", "watsan", "yosef", "spidersan", "artisan", "marksan"
+    ],
+    "commands": [
+      "npm test", "npm run build", "npm run typecheck",
+      "git pull", "git fetch", "git status", "git log", "wake_agent"
+    ],
+    "patterns": [
+      "^git (pull|fetch|status|log|diff)$",
+      "^npm (test|run build|run typecheck|run lint)$",
+      "^npx tsx src/.*\\.ts$",
+      "^(toak|invoak|birdsan|spidersan) "
+    ]
+  },
+  "blacklist": {
+    "commands": [
+      "rm -rf", "git push --force", "DROP TABLE", "DROP DATABASE",
+      "curl | bash", "wget | sh", "curl | sh", "wget | bash"
+    ],
+    "agents": [],
+    "patterns": [
+      "rm\\s+-rf", "sudo\\s", "--force",
+      "DROP\\s+(TABLE|DATABASE)", "\\|\\s*(bash|sh)$",
+      "eval\\s*\\(", "exec\\s*\\("
+    ]
+  },
+  "settings": {
+    "require_approval_for_unknown": true,
+    "approval_timeout_minutes": 30,
+    "notify_on_execution": true,
+    "max_schedules_per_agent_per_day": 50,
+    "max_active_schedules_per_agent": 5
+  }
+}
