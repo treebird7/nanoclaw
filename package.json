@@ -15,10 +15,12 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.97.0",
+    "@types/express": "^5.0.6",
     "better-sqlite3": "^11.8.1",
     "cron-parser": "^5.5.0",
     "discord.js": "^14.18.0",
     "elevenlabs": "^1.59.0",
+    "express": "^5.2.1",
     "openai": "^4.77.0",
     "pino": "^9.6.0",
     "pino-pretty": "^13.0.0",

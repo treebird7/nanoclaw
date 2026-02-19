@@ -270,7 +270,7 @@ function isRateLimited(agentId: string, maxPerDay: number): boolean {
 // ToakBox daemon (main export)
 // ──────────────────────────────────────────────────────────────────────────────
 
-interface ToakBoxDeps {
+export interface ToakBoxDeps {
   // These are injected so ToakBox doesn't need direct MCP access
   // (MCP tools are only available inside the agent container context)
   checkInbox: () => Promise<Array<{ from: string; message: string; id: string }>>;

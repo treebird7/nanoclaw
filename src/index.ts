@@ -52,10 +52,14 @@ import {
   stopDiscord,
   DiscordMessage,
 } from './discord.js';
+import express from 'express';
 import { GroupQueue } from './group-queue.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
+import { ToakBox } from './toakbox.js';
+import { createAuditLogger } from './toakbox-audit.js';
+import { createToakBoxRouter } from './routes/toakbox.js';
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -976,6 +980,33 @@ async function main(): Promise<void> {
   initDatabase();
   logger.info('Database initialized');
   loadState();
+
+  // ToakBox monitoring — stub deps (real processing handled by scheduled tasks)
+  const toakboxInstance = new ToakBox(
+    {
+      pollIntervalMs: 120000,
+      permissionFilePath: process.env.TOAKBOX_PERMISSIONS_PATH || './toakbox-permissions.json',
+      permissionRefreshMs: 300000,
+      treebird_agent_id: 'treebird',
+    },
+    {
+      checkInbox: async () => [],
+      sendToAgent: async () => {},
+      requestApproval: async () => false,
+      scheduleTask: async () => '',
+      cancelTask: async () => {},
+      wakeAgent: async () => {},
+    },
+  );
+  toakboxInstance.start();
+
+  const app = express();
+  app.use(express.json());
+  app.use('/api/toakbox', createToakBoxRouter(toakboxInstance, createAuditLogger()));
+  const HTTP_PORT = Number(process.env.HTTP_PORT) || 3737;
+  app.listen(HTTP_PORT, () => {
+    logger.info({ port: HTTP_PORT }, 'NanoClaw HTTP server listening');
+  });
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
