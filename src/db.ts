@@ -251,50 +251,60 @@ export function storeMessageDirect(msg: {
 export function getNewMessages(
   jids: string[],
   lastTimestamp: string,
+  lastId: string,
   botPrefix: string,
-): { messages: NewMessage[]; newTimestamp: string } {
-  if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp };
+): { messages: NewMessage[]; newTimestamp: string; newId: string } {
+  if (jids.length === 0) return { messages: [], newTimestamp: lastTimestamp, newId: lastId };
 
   const placeholders = jids.map(() => '?').join(',');
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
+  // Use composite cursor (timestamp, id) to avoid losing messages with identical timestamps.
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
-    WHERE timestamp > ? AND chat_jid IN (${placeholders})
+    WHERE (timestamp > ? OR (timestamp = ? AND id > ?))
+      AND chat_jid IN (${placeholders})
       AND is_bot_message = 0 AND content NOT LIKE ?
-    ORDER BY timestamp
+    ORDER BY timestamp, id
   `;
 
   const rows = db
     .prepare(sql)
-    .all(lastTimestamp, ...jids, `${botPrefix}:%`) as NewMessage[];
+    .all(lastTimestamp, lastTimestamp, lastId, ...jids, `${botPrefix}:%`) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
+  let newId = lastId;
   for (const row of rows) {
-    if (row.timestamp > newTimestamp) newTimestamp = row.timestamp;
+    if (row.timestamp > newTimestamp || (row.timestamp === newTimestamp && row.id > newId)) {
+      newTimestamp = row.timestamp;
+      newId = row.id;
+    }
   }
 
-  return { messages: rows, newTimestamp };
+  return { messages: rows, newTimestamp, newId };
 }
 
 export function getMessagesSince(
   chatJid: string,
   sinceTimestamp: string,
+  sinceId: string,
   botPrefix: string,
 ): NewMessage[] {
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
+  // Use composite cursor (timestamp, id) to avoid losing messages with identical timestamps.
   const sql = `
     SELECT id, chat_jid, sender, sender_name, content, timestamp
     FROM messages
-    WHERE chat_jid = ? AND timestamp > ?
+    WHERE chat_jid = ?
+      AND (timestamp > ? OR (timestamp = ? AND id > ?))
       AND is_bot_message = 0 AND content NOT LIKE ?
-    ORDER BY timestamp
+    ORDER BY timestamp, id
   `;
   return db
     .prepare(sql)
-    .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
+    .all(chatJid, sinceTimestamp, sinceTimestamp, sinceId, `${botPrefix}:%`) as NewMessage[];
 }
 
 export function createTask(
