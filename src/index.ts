@@ -201,6 +201,17 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
 
   if (missedMessages.length === 0) return true;
 
+  // Handle bot commands directly — do not pass to Claude agent
+  const lastMsg = missedMessages[missedMessages.length - 1];
+  if (lastMsg.content.trim().toLowerCase() === '!sync') {
+    const triggerPath = path.join(DATA_DIR, 'ipc', 'sync-trigger');
+    fs.writeFileSync(triggerPath, new Date().toISOString());
+    await sendMessage(chatJid, `🔄 Sync triggered — sansan-knowledge will update shortly.`);
+    lastAgentTimestamp[chatJid] = lastMsg.timestamp;
+    saveState();
+    return true;
+  }
+
   // For non-main groups, check if trigger is required and present
   if (!isMainGroup && group.requiresTrigger !== false) {
     // Use per-group trigger pattern for multi-agent channels
