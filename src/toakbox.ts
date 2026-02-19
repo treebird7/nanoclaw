@@ -288,6 +288,22 @@ export class ToakBox {
   private lastPermissionLoad = 0;
   private running = false;
 
+  private _lastTick: Date | null = null;
+  private _pendingMessages: number = 0;
+  private _permissionsLoadedAt: Date = new Date();
+  private _startedAt: Date = new Date();
+  private _running: boolean = false;
+
+  get status() {
+    return {
+      running: this._running,
+      lastTick: this._lastTick?.toISOString() ?? null,
+      pendingMessages: this._pendingMessages,
+      permissionsLoadedAt: this._permissionsLoadedAt.toISOString(),
+      uptime: Math.floor((Date.now() - this._startedAt.getTime()) / 1000),
+    };
+  }
+
   constructor(
     private config: ToakBoxConfig,
     private deps: ToakBoxDeps,
@@ -300,6 +316,7 @@ export class ToakBox {
     if (now - this.lastPermissionLoad > this.config.permissionRefreshMs) {
       this.permissions = loadPermissions(this.config.permissionFilePath);
       this.lastPermissionLoad = now;
+      this._permissionsLoadedAt = new Date();
     }
   }
 
@@ -441,8 +458,10 @@ export class ToakBox {
   }
 
   async tick(): Promise<void> {
+    this._lastTick = new Date();
     try {
       const messages = await this.deps.checkInbox();
+      this._pendingMessages = messages.length;
       for (const msg of messages) {
         await this.handleRequest(msg.from, msg.message);
       }
@@ -454,6 +473,7 @@ export class ToakBox {
   start(): void {
     if (this.running) return;
     this.running = true;
+    this._running = true;
     logger.info({ pollIntervalMs: this.config.pollIntervalMs }, 'ToakBox: Daemon started');
 
     const loop = async () => {
@@ -467,6 +487,7 @@ export class ToakBox {
 
   stop(): void {
     this.running = false;
+    this._running = false;
     logger.info('ToakBox: Daemon stopped');
   }
 }
