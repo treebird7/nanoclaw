@@ -18,7 +18,7 @@ export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
   /** Optional: route IPC messages to a Telegram bot pool (swarm support) */
   sendPoolMessage?: (jid: string, text: string, sender: string, sourceGroup: string) => Promise<void>;
-  registeredGroups: () => Record<string, RegisteredGroup>;
+  registeredGroups: () => Record<string, RegisteredGroup[]>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroupMetadata: (force: boolean) => Promise<void>;
   getAvailableGroups: () => AvailableGroup[];
@@ -75,11 +75,11 @@ export function startIpcWatcher(deps: IpcDeps): void {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
               if (data.type === 'message' && data.chatJid && data.text) {
                 // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
+                const targetGroups = registeredGroups[data.chatJid];
+                const isAuthorized =
                   isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
+                  (targetGroups && targetGroups.some((g) => g.folder === sourceGroup));
+                if (isAuthorized) {
                   if (data.sender && data.chatJid.startsWith('tg:') && deps.sendPoolMessage) {
                     await deps.sendPoolMessage(data.chatJid, data.text, data.sender, sourceGroup);
                   } else {
@@ -192,9 +192,9 @@ export async function processTaskIpc(
       ) {
         // Resolve the target group from JID
         const targetJid = data.targetJid as string;
-        const targetGroupEntry = registeredGroups[targetJid];
+        const targetGroupEntries = registeredGroups[targetJid];
 
-        if (!targetGroupEntry) {
+        if (!targetGroupEntries || targetGroupEntries.length === 0) {
           logger.warn(
             { targetJid },
             'Cannot schedule task: target group not registered',
@@ -202,6 +202,8 @@ export async function processTaskIpc(
           break;
         }
 
+        // For multi-group channels, find the group matching the source
+        const targetGroupEntry = targetGroupEntries.find((g) => g.folder === sourceGroup) || targetGroupEntries[0];
         const targetFolder = targetGroupEntry.folder;
 
         // Authorization: non-main groups can only schedule for themselves

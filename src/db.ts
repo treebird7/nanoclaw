@@ -65,14 +65,15 @@ function createSchema(database: Database.Database): void {
       session_id TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS registered_groups (
-      jid TEXT PRIMARY KEY,
+      folder TEXT PRIMARY KEY,
+      jid TEXT NOT NULL,
       name TEXT NOT NULL,
-      folder TEXT NOT NULL UNIQUE,
       trigger_pattern TEXT NOT NULL,
       added_at TEXT NOT NULL,
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
     );
+    CREATE INDEX IF NOT EXISTS idx_registered_groups_jid ON registered_groups(jid);
   `);
 
   // Add context_mode column if it doesn't exist (migration for existing DBs)
@@ -259,19 +260,33 @@ export function getNewMessages(
   const placeholders = jids.map(() => '?').join(',');
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
-  // Use composite cursor (timestamp, id) to avoid losing messages with identical timestamps.
-  const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
-    FROM messages
-    WHERE (timestamp > ? OR (timestamp = ? AND id > ?))
-      AND chat_jid IN (${placeholders})
-      AND is_bot_message = 0 AND content NOT LIKE ?
-    ORDER BY timestamp, id
-  `;
+  // Use composite cursor (timestamp, id) when lastId is known; fall back to strict
+  // timestamp comparison on first run (lastId = '') to preserve exclusive semantics.
+  let sql: string;
+  let params: unknown[];
+  if (lastId) {
+    sql = `
+      SELECT id, chat_jid, sender, sender_name, content, timestamp
+      FROM messages
+      WHERE (timestamp > ? OR (timestamp = ? AND id > ?))
+        AND chat_jid IN (${placeholders})
+        AND is_bot_message = 0 AND content NOT LIKE ?
+      ORDER BY timestamp, id
+    `;
+    params = [lastTimestamp, lastTimestamp, lastId, ...jids, `${botPrefix}:%`];
+  } else {
+    sql = `
+      SELECT id, chat_jid, sender, sender_name, content, timestamp
+      FROM messages
+      WHERE timestamp > ?
+        AND chat_jid IN (${placeholders})
+        AND is_bot_message = 0 AND content NOT LIKE ?
+      ORDER BY timestamp, id
+    `;
+    params = [lastTimestamp, ...jids, `${botPrefix}:%`];
+  }
 
-  const rows = db
-    .prepare(sql)
-    .all(lastTimestamp, lastTimestamp, lastId, ...jids, `${botPrefix}:%`) as NewMessage[];
+  const rows = db.prepare(sql).all(...params) as NewMessage[];
 
   let newTimestamp = lastTimestamp;
   let newId = lastId;
@@ -293,18 +308,32 @@ export function getMessagesSince(
 ): NewMessage[] {
   // Filter bot messages using both the is_bot_message flag AND the content
   // prefix as a backstop for messages written before the migration ran.
-  // Use composite cursor (timestamp, id) to avoid losing messages with identical timestamps.
-  const sql = `
-    SELECT id, chat_jid, sender, sender_name, content, timestamp
-    FROM messages
-    WHERE chat_jid = ?
-      AND (timestamp > ? OR (timestamp = ? AND id > ?))
-      AND is_bot_message = 0 AND content NOT LIKE ?
-    ORDER BY timestamp, id
-  `;
-  return db
-    .prepare(sql)
-    .all(chatJid, sinceTimestamp, sinceTimestamp, sinceId, `${botPrefix}:%`) as NewMessage[];
+  // Use composite cursor when sinceId is known; strict timestamp on first run.
+  if (sinceId) {
+    const sql = `
+      SELECT id, chat_jid, sender, sender_name, content, timestamp
+      FROM messages
+      WHERE chat_jid = ?
+        AND (timestamp > ? OR (timestamp = ? AND id > ?))
+        AND is_bot_message = 0 AND content NOT LIKE ?
+      ORDER BY timestamp, id
+    `;
+    return db
+      .prepare(sql)
+      .all(chatJid, sinceTimestamp, sinceTimestamp, sinceId, `${botPrefix}:%`) as NewMessage[];
+  } else {
+    const sql = `
+      SELECT id, chat_jid, sender, sender_name, content, timestamp
+      FROM messages
+      WHERE chat_jid = ?
+        AND timestamp > ?
+        AND is_bot_message = 0 AND content NOT LIKE ?
+      ORDER BY timestamp, id
+    `;
+    return db
+      .prepare(sql)
+      .all(chatJid, sinceTimestamp, `${botPrefix}:%`) as NewMessage[];
+  }
 }
 
 export function createTask(
@@ -531,7 +560,7 @@ export function setRegisteredGroup(
   );
 }
 
-export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
+export function getAllRegisteredGroups(): Record<string, RegisteredGroup[]> {
   const rows = db
     .prepare('SELECT * FROM registered_groups')
     .all() as Array<{
@@ -543,9 +572,12 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
     container_config: string | null;
     requires_trigger: number | null;
   }>;
-  const result: Record<string, RegisteredGroup> = {};
+  const result: Record<string, RegisteredGroup[]> = {};
   for (const row of rows) {
-    result[row.jid] = {
+    if (!result[row.jid]) {
+      result[row.jid] = [];
+    }
+    result[row.jid].push({
       name: row.name,
       folder: row.folder,
       trigger: row.trigger_pattern,
@@ -554,7 +586,7 @@ export function getAllRegisteredGroups(): Record<string, RegisteredGroup> {
         ? JSON.parse(row.container_config)
         : undefined,
       requiresTrigger: row.requires_trigger === null ? undefined : row.requires_trigger === 1,
-    };
+    });
   }
   return result;
 }

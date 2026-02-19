@@ -105,12 +105,12 @@ function createTestOpts(overrides?: Partial<WhatsAppChannelOpts>): WhatsAppChann
     onMessage: vi.fn(),
     onChatMetadata: vi.fn(),
     registeredGroups: vi.fn(() => ({
-      'registered@g.us': {
+      'registered@g.us': [{
         name: 'Test Group',
         folder: 'test-group',
         trigger: '@Andy',
         added_at: '2024-01-01T00:00:00.000Z',
-      },
+      }],
     })),
     ...overrides,
   };
@@ -548,12 +548,12 @@ describe('WhatsAppChannel', () => {
     it('translates known LID to phone JID', async () => {
       const opts = createTestOpts({
         registeredGroups: vi.fn(() => ({
-          '1234567890@s.whatsapp.net': {
+          '1234567890@s.whatsapp.net': [{
             name: 'Self Chat',
             folder: 'self-chat',
             trigger: '@Andy',
             added_at: '2024-01-01T00:00:00.000Z',
-          },
+          }],
         })),
       });
       const channel = new WhatsAppChannel(opts);
