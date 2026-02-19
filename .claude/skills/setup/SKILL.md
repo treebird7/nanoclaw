@@ -164,44 +164,86 @@ Run `./.claude/skills/setup/scripts/06-register-channel.sh` with args:
 
 AskUserQuestion: Want the agent to access directories outside the NanoClaw project? (Git repos, project folders, documents, etc.)
 
-**If no:** Run `./.claude/skills/setup/scripts/07-configure-mounts.sh --empty`
+## 8. External Directory Access (Optional)
 
-**If yes:** Collect directory paths and permissions (read-write vs read-only). Ask about non-main group read-only restriction (recommended: yes). Build the JSON and pipe it to the script:
+Tell the user:
+> By default, agents can only access their own group folders. If you want agents to access external directories (like `~/projects` or `~/repos`), you can run the `/add-mount` skill later.
+>
+> This is optional and can be configured anytime after setup.
 
-`echo '{"allowedRoots":[...],"blockedPatterns":[],"nonMainReadOnly":true}' | ./.claude/skills/setup/scripts/07-configure-mounts.sh`
+Continue to the next step.
 
-Tell user how to grant a group access: add `containerConfig.additionalMounts` to their entry in `data/registered_groups.json`.
+## 9. Configure launchd Service
 
-## 10. Start Service
+Generate the plist file with correct paths automatically:
 
-If the service is already running (check `launchctl list | grep nanoclaw` on macOS), unload it first: `launchctl unload ~/Library/LaunchAgents/com.nanoclaw.plist` — then proceed with a clean install.
+```bash
+NODE_PATH=$(which node)
+PROJECT_PATH=$(pwd)
+HOME_PATH=$HOME
 
-Run `./.claude/skills/setup/scripts/08-setup-service.sh` and parse the status block.
+cat > ~/Library/LaunchAgents/com.nanoclaw.plist << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.nanoclaw</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>${NODE_PATH}</string>
+        <string>${PROJECT_PATH}/dist/index.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>${PROJECT_PATH}</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:${HOME_PATH}/.local/bin</string>
+        <key>HOME</key>
+        <string>${HOME_PATH}</string>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>${PROJECT_PATH}/logs/nanoclaw.log</string>
+    <key>StandardErrorPath</key>
+    <string>${PROJECT_PATH}/logs/nanoclaw.error.log</string>
+</dict>
+</plist>
+EOF
 
-**If SERVICE_LOADED=false:**
-- Read `logs/setup.log` for the error.
-- Common fix: plist already loaded with different path. Unload the old one first, then re-run.
-- On macOS: check `launchctl list | grep nanoclaw` to see if it's loaded with an error status. If the PID column is `-` and the status column is non-zero, the service is crashing. Read `logs/nanoclaw.error.log` for the crash reason and fix it (common: wrong Node path, missing .env, missing auth).
-- On Linux: check `systemctl --user status nanoclaw` for the error and fix accordingly.
-- Re-run the setup-service script after fixing.
+echo "Created launchd plist with:"
+echo "  Node: ${NODE_PATH}"
+echo "  Project: ${PROJECT_PATH}"
+```
 
-## 11. Verify
+Build and start the service:
 
-Run `./.claude/skills/setup/scripts/09-verify.sh` and parse the status block.
+```bash
+npm run build
+mkdir -p logs
+launchctl load ~/Library/LaunchAgents/com.nanoclaw.plist
+```
 
-**If STATUS=failed, fix each failing component:**
-- SERVICE=stopped → run `npm run build` first, then restart: `launchctl kickstart -k gui/$(id -u)/com.nanoclaw` (macOS) or `systemctl --user restart nanoclaw` (Linux). Re-check.
-- SERVICE=not_found → re-run step 10.
-- CREDENTIALS=missing → re-run step 4.
-- WHATSAPP_AUTH=not_found → re-run step 5.
-- REGISTERED_GROUPS=0 → re-run steps 7-8.
-- MOUNT_ALLOWLIST=missing → run `./.claude/skills/setup/scripts/07-configure-mounts.sh --empty` to create a default.
+Verify it's running:
+```bash
+launchctl list | grep nanoclaw
+```
 
-After fixing, re-run `09-verify.sh` to confirm everything passes.
+## 11. Test
 
-Tell user to test: send a message in their registered chat (with or without trigger depending on channel type).
+Tell the user (using the assistant name they configured):
+> Send `@ASSISTANT_NAME hello` in your registered chat.
 
-Show the log tail command: `tail -f logs/nanoclaw.log`
+Check the logs:
+```bash
+tail -f logs/nanoclaw.log
+```
+
+The user should receive a response in WhatsApp.
 
 ## Troubleshooting
 
