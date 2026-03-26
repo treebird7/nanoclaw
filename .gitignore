@@ -36,3 +36,20 @@ agents.json
 .vscode/
 
 agents-sdk-docs
+
+.jules/
+.claude/
+.agent/
+.myctoak/
+.cursor/
+.gemini/
+.cline/
+.pending_task.md
+run.sh
+BACKLOG.md
+MAINTENANCE_TASKS.md
+SPIDERSAN_LESSONS_LEARNED.md
+collab/
+tasks/
+
+# Agent-specific tool directories (never commit)
